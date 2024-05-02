@@ -43,7 +43,7 @@ json_to_dataframe = dataframe_kafka.selectExpr("CAST(value AS STRING)") \
         col("data.speed").alias("speed")
         
     ) \
-    .groupBy("link" , "time") \
+    .groupBy("link") \
     .agg(
        count("*").alias("vcount"), 
        avg("speed").alias("vspeed")
