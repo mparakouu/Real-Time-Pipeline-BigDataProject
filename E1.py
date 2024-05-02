@@ -1,0 +1,210 @@
+from uxsim import *
+import itertools
+import pandas as pd
+from kafka import KafkaProducer
+import json
+import time
+import datetime
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import from_json, col
+from pyspark.sql.types import StructType, StringType, IntegerType, FloatType
+
+seed = None
+
+
+W = World(
+    name="",
+    deltan=5,
+    tmax=3600, #1 hour simulation
+    print_mode=1, save_mode=0, show_mode=1,
+    random_seed=seed,
+    duo_update_time=600
+)
+random.seed(seed)
+
+# network definition
+"""
+    N1  N2  N3  N4 
+    |   |   |   |
+W1--I1--I2--I3--I4-<E1
+    |   |   |   |
+    v   ^   v   ^
+    S1  S2  S3  S4
+"""
+
+# χαρακτηριστικά δικτύου κυκλοφορίας
+signal_time = 20
+sf_1=1
+sf_2=1
+
+# δημιουργία κόμβων για τις διασταυρώσεις και τους δρόμους
+I1 = W.addNode("I1", 1, 0, signal=[signal_time*sf_1,signal_time*sf_2])
+I2 = W.addNode("I2", 2, 0, signal=[signal_time*sf_1,signal_time*sf_2])
+I3 = W.addNode("I3", 3, 0, signal=[signal_time*sf_1,signal_time*sf_2])
+I4 = W.addNode("I4", 4, 0, signal=[signal_time*sf_1,signal_time*sf_2])
+W1 = W.addNode("W1", 0, 0)
+E1 = W.addNode("E1", 5, 0)
+N1 = W.addNode("N1", 1, 1)
+N2 = W.addNode("N2", 2, 1)
+N3 = W.addNode("N3", 3, 1)
+N4 = W.addNode("N4", 4, 1)
+S1 = W.addNode("S1", 1, -1)
+S2 = W.addNode("S2", 2, -1)
+S3 = W.addNode("S3", 3, -1)
+S4 = W.addNode("S4", 4, -1)
+
+
+# οι συνδέσεις των κόμβων για την κίνηση των αμαξιών
+#E <-> W direction: signal group 0
+for n1,n2 in [[W1, I1], [I1, I2], [I2, I3], [I3, I4], [I4, E1]]:
+    W.addLink(n2.name+n1.name, n2, n1, length=500, free_flow_speed=50, jam_density=0.2, number_of_lanes=3, signal_group=0)
+    
+#N -> S direction: signal group 1
+for n1,n2 in [[N1, I1], [I1, S1], [N3, I3], [I3, S3]]:
+    W.addLink(n1.name+n2.name, n1, n2, length=500, free_flow_speed=30, jam_density=0.2, signal_group=1)
+
+#S -> N direction: signal group 2
+for n1,n2 in [[N2, I2], [I2, S2], [N4, I4], [I4, S4]]:
+    W.addLink(n2.name+n1.name, n2, n1, length=500, free_flow_speed=30, jam_density=0.2, signal_group=1)
+    
+
+
+# random demand definition every 30 seconds
+dt = 30
+demand = 2 #average demand for the simulation time
+demands = []
+for t in range(0, 3600, dt):
+    dem = random.uniform(0, demand)
+    for n1, n2 in [[N1, S1], [S2, N2], [N3, S3], [S4, N4]]:
+        W.adddemand(n1, n2, t, t+dt, dem*0.25)
+        demands.append({"start":n1.name, "dest":n2.name, "times":{"start":t,"end":t+dt}, "demand":dem})
+    for n1, n2 in [[E1, W1], [N1, W1], [S2, W1], [N3, W1],[S4, W1]]:
+        W.adddemand(n1, n2, t, t+dt, dem*0.75)
+        demands.append({"start":n1.name, "dest":n2.name, "times":{"start":t,"end":t+dt}, "demand":dem})
+
+W.exec_simulation()
+
+W.analyzer.print_simple_stats()
+
+
+# μετατροπή των data των αυτοκινήτων σε πλαίσιο δεδομένων pandas
+vehicles_data = W.analyzer.vehicles_to_pandas()
+# save σε ένα αρχείο CSV
+vehicles_data.to_csv('vehicles_data.csv', index=False, columns=['name', 'dn', 'orig', 'dest', 't', 'link', 'x', 's', 'v'])
+
+
+
+# Χρονική σφραγίδα --> ξεκινάει η προσομοίωση
+start_time = datetime.datetime.now()
+
+# μετατροπή των data των οχημάτων -- > json
+def vehicle_to_json(vehicle_data, start_time):
+    # χρόνος = χρονική σφραγίδα + t
+    simulated_time = start_time + datetime.timedelta(seconds=vehicle_data["t"])
+    data = {
+        "name": vehicle_data["name"],
+        "orig": vehicle_data["orig"],
+        "dest": vehicle_data["dest"],
+        "time": simulated_time.strftime('%Y-%m-%d %H:%M:%S'),  
+        "link": vehicle_data["link"],
+        "position": vehicle_data["x"],
+        "spacing": vehicle_data["s"],
+        "speed": vehicle_data["v"]
+    }
+    return json.dumps(data)
+
+# εκκίνηση Kafka Producer
+producer = KafkaProducer(bootstrap_servers='localhost:9092')
+
+# save οχήματα με ίδιο t
+vehicles_same_time = {}
+
+# οχήματα με waiting at origin node
+waiting_node_vehicles = []
+
+# Επανάληψη κάθε Ν δευτερόλεπτα για αποστολή δεδομένων
+N = 5  # Πόσα δευτερόλεπτα ανάμεσα στις αποστολές
+for index, row in vehicles_data.iterrows():
+    if row['link'] != 'E1':  # Ελέγχει αν το όχημα βρίσκεται σε κίνηση
+        current_time = row['t']
+        # Προσθήκη του οχήματος στη λίστα των οχημάτων με το ίδιο t
+        if current_time not in vehicles_same_time:
+            vehicles_same_time[current_time] = []
+        vehicles_same_time[current_time].append(row)
+        
+        # περίπτωση --> waiting at origin node -- > περιμένει την σειρά του
+        if row['link'] == 'waiting_at_origin_node':
+            waiting_node_vehicles.append(row)
+        else:
+            # στέλνουμε τα json με το ίδιο t 
+            if len(vehicles_same_time[current_time]) == 1:
+                vehicle_json = vehicle_to_json(row, start_time)
+                producer.send('vehicle_positions', vehicle_json.encode('utf-8'))
+                print(vehicle_json)
+            else:
+                for vehicle in vehicles_same_time[current_time]:
+                    vehicle_json = vehicle_to_json(vehicle, start_time)
+                    producer.send('vehicle_positions', vehicle_json.encode('utf-8'))
+                    print(vehicle_json)
+
+    # Έλεγχος και αποστολή των οχημάτων που περιμένουν στον κόμβο προέλευσης
+    for vehicle in waiting_node_vehicles:
+        if vehicle['t'] == current_time:
+            vehicle_json = vehicle_to_json(vehicle, start_time)
+            producer.send('vehicle_positions', vehicle_json.encode('utf-8'))
+            print(vehicle_json)
+            waiting_node_vehicles.remove(vehicle) # δεν θα ξανα επεξεργαστεί ως waiting node
+            
+    time.sleep(N)  # Αναμονή για την επόμενη αποστολή
+
+producer.close()
+
+# spark session
+spark = SparkSession.builder \
+    .appName("KafkaStreaming") \
+    .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1") \
+    .getOrCreate()
+
+# Ορισμός του σχήματος των δεδομένων JSON
+schema = StructType() \
+    .add("name", StringType()) \
+    .add("orig", StringType()) \
+    .add("dest", StringType()) \
+    .add("time", StringType()) \
+    .add("link", StringType()) \
+    .add("position", FloatType()) \
+    .add("spacing", FloatType()) \
+    .add("speed", FloatType())
+
+# δθαβάζει τα δεδομένα από το kafka 
+kafka_df = spark \
+    .readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "localhost:9092") \
+    .option("subscribe", "vehicle_positions") \
+    .load()
+
+# μετατρέπει τα δεδομένα json -- > dataframe 
+decoded_df = kafka_df.selectExpr("CAST(value AS STRING)") \
+    .select(from_json(col("value"), schema).alias("data")) \
+    .select("data.*")
+
+# Επεξεργασία του DataFrame
+processed_df = decoded_df \
+    .groupBy("time", "link") \
+    .agg({"name": "count", "speed": "avg"}) \
+    .withColumnRenamed("count(name)", "vcount") \
+    .withColumnRenamed("avg(speed)", "vspeed")
+
+# Εκκίνηση της διεργασίας
+query = processed_df \
+    .writeStream \
+    .outputMode("complete") \
+    .format("console") \
+    .start()
+
+
+# Αναμονή για την ολοκλήρωση της διεργασίας
+query.awaitTermination()
+
+ 
