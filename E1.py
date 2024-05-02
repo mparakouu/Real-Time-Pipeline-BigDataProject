@@ -6,8 +6,7 @@ import json
 import time
 import datetime
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col
-from pyspark.sql.types import StructType, StringType, IntegerType, FloatType
+
 
 seed = None
 
@@ -123,7 +122,7 @@ vehicles_same_time = {}
 waiting_node_vehicles = []
 
 # Επανάληψη κάθε Ν δευτερόλεπτα για αποστολή δεδομένων
-N = 5  # Πόσα δευτερόλεπτα ανάμεσα στις αποστολές
+N = 5  # sec ανάμεσα στις αποστολές
 for index, row in vehicles_data.iterrows():
     if row['link'] != 'E1':  # Ελέγχει αν το όχημα βρίσκεται σε κίνηση
         current_time = row['t']
@@ -159,52 +158,3 @@ for index, row in vehicles_data.iterrows():
 
 producer.close()
 
-# spark session
-spark = SparkSession.builder \
-    .appName("KafkaStreaming") \
-    .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.1.1") \
-    .getOrCreate()
-
-# Ορισμός του σχήματος των δεδομένων JSON
-schema = StructType() \
-    .add("name", StringType()) \
-    .add("orig", StringType()) \
-    .add("dest", StringType()) \
-    .add("time", StringType()) \
-    .add("link", StringType()) \
-    .add("position", FloatType()) \
-    .add("spacing", FloatType()) \
-    .add("speed", FloatType())
-
-# δθαβάζει τα δεδομένα από το kafka 
-kafka_df = spark \
-    .readStream \
-    .format("kafka") \
-    .option("kafka.bootstrap.servers", "localhost:9092") \
-    .option("subscribe", "vehicle_positions") \
-    .load()
-
-# μετατρέπει τα δεδομένα json -- > dataframe 
-decoded_df = kafka_df.selectExpr("CAST(value AS STRING)") \
-    .select(from_json(col("value"), schema).alias("data")) \
-    .select("data.*")
-
-# Επεξεργασία του DataFrame
-processed_df = decoded_df \
-    .groupBy("time", "link") \
-    .agg({"name": "count", "speed": "avg"}) \
-    .withColumnRenamed("count(name)", "vcount") \
-    .withColumnRenamed("avg(speed)", "vspeed")
-
-# Εκκίνηση της διεργασίας
-query = processed_df \
-    .writeStream \
-    .outputMode("complete") \
-    .format("console") \
-    .start()
-
-
-# Αναμονή για την ολοκλήρωση της διεργασίας
-query.awaitTermination()
-
- 
