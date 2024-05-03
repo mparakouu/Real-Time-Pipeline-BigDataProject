@@ -1,15 +1,16 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col, avg, count
+from pyspark.sql.functions import from_json, col, avg, count, first
 from pyspark.sql.types import StructType, StringType, IntegerType, FloatType
 
 
 # spark session
+# περιβάλλον εκτέλεσης spark 
 spark_session = SparkSession.builder \
     .appName("VehiclesDataFromKafka") \
     .getOrCreate()
 
-#  schema 
-schema_json = StructType() \
+#  η δομή των json δεδομένων  
+json_schema = StructType() \
     .add("name", StringType()) \
     .add("orig", StringType()) \
     .add("dest", StringType()) \
@@ -20,23 +21,27 @@ schema_json = StructType() \
     .add("speed", FloatType())
 
 # δημιουργία ενός dataframe που θα εισάγονται όλα τα δεδομένα 
-DATAFRAME = spark_session.createDataFrame(spark_session.sparkContext.emptyRDD(), schema_json )
+DATAFRAME = spark_session.createDataFrame(spark_session.sparkContext.emptyRDD(), json_schema )
 
 
 # διαβάζει τα json data απο το vehicle_positions
+# οριζουμε τη address τους των brokers του kafka cluster -->  "localhost:9092", kafka, spark εκτελούνεται στην ίδια address
 dataframe_kafka = spark_session \
     .readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", "localhost:9092") \
     .option("subscribe", "vehicle_positions") \
+    .option("startingOffsets", "earliest") \
     .option("logLevel", "ERROR") \
     .load()
+
+
 
 
 # μετατροπή των json data --> dataframe
 # κάνουμε ομαδοποίηση , ίδιο time -> ερχονται μαζι -> ιδιο link -> μεση ταχυτητα και αριθμος 
 json_to_dataframe = dataframe_kafka.selectExpr("CAST(value AS STRING)") \
-    .select(from_json("value", schema_json).alias("data")) \
+    .select(from_json("value", json_schema).alias("data")) \
     .select(
         col("data.link").alias("link"),
         col("data.time").alias("time"),
@@ -46,17 +51,19 @@ json_to_dataframe = dataframe_kafka.selectExpr("CAST(value AS STRING)") \
     .groupBy("link") \
     .agg(
        count("*").alias("vcount"), 
-       avg("speed").alias("vspeed")
+       avg("speed").alias("vspeed"),
+       first("time").alias("Time")
     )\
 
 
-
 # Εκτύπωση του επιλεγμένου DataFrame
-query_selected_fields = json_to_dataframe \
+# εκτυπώνεται ολόκληρο το αποτέλεσμα καθε φορά που ενημερώνεται 
+# streaming περιβάλλον , το dataframe συνεχώς επεξεργάζεται τα δεδομένα που έρχονται 
+selected_DATAFRAME = json_to_dataframe \
     .writeStream \
     .outputMode("complete") \
     .format("console") \
     .start()
 
 
-query_selected_fields.awaitTermination()
+selected_DATAFRAME.awaitTermination()
