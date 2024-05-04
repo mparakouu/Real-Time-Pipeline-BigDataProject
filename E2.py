@@ -59,7 +59,7 @@ json_to_dataframe = dataframe_kafka.selectExpr("CAST(value AS STRING)") \
 # save τα data --> mongodb
 def Save_mongodb(batch_df, epoch_id):
     batch_df.write \
-        .format("mongodb") \
+        .format("mongo") \
         .mode("overwrite") \
         .option("database", "MyVehiclesData") \
         .option("collection", "vehiclesData") \
@@ -70,12 +70,10 @@ def Save_mongodb(batch_df, epoch_id):
 # Εκτύπωση του επιλεγμένου DataFrame
 # εκτυπώνεται ολόκληρο το αποτέλεσμα καθε φορά που ενημερώνεται 
 # streaming περιβάλλον , το dataframe συνεχώς επεξεργάζεται τα δεδομένα που έρχονται 
-selected_DATAFRAME = json_to_dataframe \
-    .writeStream \
+json_to_dataframe.write \
     .foreachBatch(Save_mongodb) \
     .outputMode("complete") \
     .format("console") \
-    .start()
+    .start() \
+    .awaitTermination()
 
-
-selected_DATAFRAME.awaitTermination()
