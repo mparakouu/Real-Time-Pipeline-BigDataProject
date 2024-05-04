@@ -1,6 +1,7 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import from_json, col, avg, count, first
 from pyspark.sql.types import StructType, StringType, IntegerType, FloatType
+from pyspark.sql import Row
 
 
 # spark session
@@ -55,12 +56,23 @@ json_to_dataframe = dataframe_kafka.selectExpr("CAST(value AS STRING)") \
        first("time").alias("Time")
     )\
 
+# save τα data --> mongodb
+def Save_mongodb(batch_df, epoch_id):
+    batch_df.write \
+        .format("mongodb") \
+        .mode("overwrite") \
+        .option("database", "MyVehiclesData") \
+        .option("collection", "vehiclesData") \
+        .option("uri", "mongodb://localhost:27017") \
+        .save()
+
 
 # Εκτύπωση του επιλεγμένου DataFrame
 # εκτυπώνεται ολόκληρο το αποτέλεσμα καθε φορά που ενημερώνεται 
 # streaming περιβάλλον , το dataframe συνεχώς επεξεργάζεται τα δεδομένα που έρχονται 
 selected_DATAFRAME = json_to_dataframe \
     .writeStream \
+    .foreachBatch(Save_mongodb) \
     .outputMode("complete") \
     .format("console") \
     .start()
