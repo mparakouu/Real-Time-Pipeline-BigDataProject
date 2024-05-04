@@ -70,10 +70,13 @@ def Save_mongodb(batch_df, epoch_id):
 # Εκτύπωση του επιλεγμένου DataFrame
 # εκτυπώνεται ολόκληρο το αποτέλεσμα καθε φορά που ενημερώνεται 
 # streaming περιβάλλον , το dataframe συνεχώς επεξεργάζεται τα δεδομένα που έρχονται 
-json_to_dataframe.write \
+selected_DATAFRAME = json_to_dataframe \
+    .writeStream \
     .foreachBatch(Save_mongodb) \
     .outputMode("complete") \
     .format("console") \
-    .start() \
-    .awaitTermination()
+    .start()
+
+selected_DATAFRAME.awaitTermination()
+
 
