@@ -60,11 +60,13 @@ json_to_dataframe = dataframe_kafka.selectExpr("CAST(value AS STRING)") \
 def Save_mongodb(batch_df, epoch_id):
     batch_df.write \
         .format("mongo") \
-        .mode("overwrite") \
+        .mode("append") \
         .option("database", "MyVehiclesData") \
         .option("collection", "vehiclesData") \
         .option("uri", "mongodb://localhost:27017") \
         .save()
+
+
 
 
 # Εκτύπωση του επιλεγμένου DataFrame
