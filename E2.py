@@ -77,6 +77,6 @@ selected_DATAFRAME = json_to_dataframe \
     .format("console") \
     .start()
 
-selected_DATAFRAME.awaitTermination()
 
+selected_DATAFRAME.awaitTermination()
 
