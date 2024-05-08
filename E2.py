@@ -42,6 +42,9 @@ dataframe_kafka_raw = spark_session \
 json_to_dataframe_raw = dataframe_kafka_raw.selectExpr("CAST(value AS STRING)") \
     .select(from_json("value", json_schema).alias("data")) \
     .select(
+        col("data.name").alias("name"),
+        col("data.orig").alias("orig"),
+        col("data.dest").alias("dest"),
         col("data.link").alias("link"),
         col("data.time").alias("time"),
         col("data.speed").alias("speed")
