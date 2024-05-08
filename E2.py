@@ -27,7 +27,8 @@ DATAFRAME = spark_session.createDataFrame(spark_session.sparkContext.emptyRDD(),
 
 # διαβάζει τα json data απο το vehicle_positions
 # οριζουμε τη address τους των brokers του kafka cluster -->  "localhost:9092", kafka, spark εκτελούνεται στην ίδια address
-dataframe_kafka = spark_session \
+
+dataframe_kafka_raw = spark_session \
     .readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", "localhost:9092") \
@@ -37,6 +38,44 @@ dataframe_kafka = spark_session \
     .load()
 
 
+
+json_to_dataframe_raw = dataframe_kafka_raw.selectExpr("CAST(value AS STRING)") \
+    .select(from_json("value", json_schema).alias("data")) \
+    .select(
+        col("data.link").alias("link"),
+        col("data.time").alias("time"),
+        col("data.speed").alias("speed")
+)\
+
+
+
+def Save_mongodb_raw(batch_df, epoch_id):
+    batch_df.write \
+        .format("mongo") \
+        .mode("append") \
+        .option("database", "MyVehiclesData") \
+        .option("collection", "RawVehiclesData") \
+        .option("uri", "mongodb://localhost:27017") \
+        .save()
+
+# Εκκίνηση της διαδικασίας επεξεργασίας για τα ωμά δεδομένα
+selected_raw_DATAFRAME= json_to_dataframe_raw \
+    .writeStream \
+    .foreachBatch(Save_mongodb_raw) \
+    .outputMode("append") \
+    .start()
+
+
+
+
+dataframe_kafka = spark_session \
+    .readStream \
+    .format("kafka") \
+    .option("kafka.bootstrap.servers", "localhost:9092") \
+    .option("subscribe", "vehicle_positions") \
+    .option("startingOffsets", "earliest") \
+    .option("logLevel", "ERROR") \
+    .load()
 
 
 # μετατροπή των json data --> dataframe
@@ -55,19 +94,18 @@ json_to_dataframe = dataframe_kafka.selectExpr("CAST(value AS STRING)") \
        avg("speed").alias("vspeed"),
        first("time").alias("Time")
     )\
+    
 
-# save τα data --> mongodb
+
+# --  save τα data --> mongodb
 def Save_mongodb(batch_df, epoch_id):
     batch_df.write \
         .format("mongo") \
         .mode("append") \
         .option("database", "MyVehiclesData") \
-        .option("collection", "vehiclesData") \
+        .option("collection", "ProcessedVehiclesData") \
         .option("uri", "mongodb://localhost:27017") \
         .save()
-
-
-
 
 # Εκτύπωση του επιλεγμένου DataFrame
 # εκτυπώνεται ολόκληρο το αποτέλεσμα καθε φορά που ενημερώνεται 
@@ -76,9 +114,8 @@ selected_DATAFRAME = json_to_dataframe \
     .writeStream \
     .foreachBatch(Save_mongodb) \
     .outputMode("complete") \
-    .format("console") \
     .start()
 
 
+selected_raw_DATAFRAME.awaitTermination()
 selected_DATAFRAME.awaitTermination()
-
