@@ -113,7 +113,8 @@ def vehicle_to_json(vehicle_data, start_time):
     return json.dumps(data)
 
 # εκκίνηση Kafka Producer
-Kafka_producer = KafkaProducer(bootstrap_servers='localhost:9092')
+#Kafka_producer = KafkaProducer(bootstrap_servers='localhost:9092')
+Kafka_producer = KafkaProducer(bootstrap_servers='150.140.142.71:9092')
 
 # save οχήματα με ίδιο t
 vehicles_same_time = {}

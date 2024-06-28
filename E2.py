@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col, avg, count, first
+from pyspark.sql.functions import from_json, col, avg, count, min
 from pyspark.sql.types import StructType, StringType, IntegerType, FloatType
 from pyspark.sql import Row
 
@@ -22,7 +22,7 @@ json_schema = StructType() \
     .add("speed", FloatType())
 
 # δημιουργία ενός dataframe που θα εισάγονται όλα τα δεδομένα 
-DATAFRAME = spark_session.createDataFrame(spark_session.sparkContext.emptyRDD(), json_schema )
+# DATAFRAME = spark_session.createDataFrame(spark_session.sparkContext.emptyRDD(), json_schema )
 
 
 # διαβάζει τα json data απο το vehicle_positions
@@ -31,7 +31,7 @@ DATAFRAME = spark_session.createDataFrame(spark_session.sparkContext.emptyRDD(),
 dataframe_kafka_raw = spark_session \
     .readStream \
     .format("kafka") \
-    .option("kafka.bootstrap.servers", "localhost:9092") \
+    .option("kafka.bootstrap.servers", "150.140.142.71:9092") \
     .option("subscribe", "vehicle_positions") \
     .option("startingOffsets", "earliest") \
     .option("logLevel", "ERROR") \
@@ -53,6 +53,8 @@ json_to_dataframe_raw = dataframe_kafka_raw.selectExpr("CAST(value AS STRING)") 
 
 
 def Save_mongodb_raw(batch_df, epoch_id):
+    batch_df = batch_df.orderBy("time")
+    batch_df.show(truncate=False) 
     batch_df.write \
         .format("mongo") \
         .mode("append") \
@@ -65,7 +67,7 @@ def Save_mongodb_raw(batch_df, epoch_id):
 selected_raw_DATAFRAME= json_to_dataframe_raw \
     .writeStream \
     .foreachBatch(Save_mongodb_raw) \
-    .outputMode("append") \
+    .outputMode("update") \
     .start()
 
 
@@ -74,7 +76,7 @@ selected_raw_DATAFRAME= json_to_dataframe_raw \
 dataframe_kafka = spark_session \
     .readStream \
     .format("kafka") \
-    .option("kafka.bootstrap.servers", "localhost:9092") \
+    .option("kafka.bootstrap.servers", "150.140.142.71:9092") \
     .option("subscribe", "vehicle_positions") \
     .option("startingOffsets", "earliest") \
     .option("logLevel", "ERROR") \
@@ -89,19 +91,20 @@ json_to_dataframe = dataframe_kafka.selectExpr("CAST(value AS STRING)") \
         col("data.link").alias("link"),
         col("data.time").alias("time"),
         col("data.speed").alias("speed")
-        
     ) \
     .groupBy("link") \
     .agg(
-       count("*").alias("vcount"), 
-       avg("speed").alias("vspeed"),
-       first("time").alias("Time")
-    )\
+        count("*").alias("vcount"),
+        avg("speed").alias("vspeed"),
+        min(col("time")).alias("Time")
+    )
     
 
 
 # --  save τα data --> mongodb
 def Save_mongodb(batch_df, epoch_id):
+    batch_df = batch_df.orderBy("time")
+    batch_df.show(truncate=True) 
     batch_df.write \
         .format("mongo") \
         .mode("append") \
@@ -109,6 +112,8 @@ def Save_mongodb(batch_df, epoch_id):
         .option("collection", "ProcessedVehiclesData") \
         .option("uri", "mongodb://localhost:27017") \
         .save()
+    
+
 
 # Εκτύπωση του επιλεγμένου DataFrame
 # εκτυπώνεται ολόκληρο το αποτέλεσμα καθε φορά που ενημερώνεται 
