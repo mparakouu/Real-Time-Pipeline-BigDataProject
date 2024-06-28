@@ -1,7 +1,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import from_json, col, avg, count, min
-from pyspark.sql.types import StructType, StringType, IntegerType, FloatType
-from pyspark.sql import Row
+from pyspark.sql.types import *
 
 
 # spark session
@@ -48,9 +47,7 @@ json_to_dataframe_raw = dataframe_kafka_raw.selectExpr("CAST(value AS STRING)") 
         col("data.link").alias("link"),
         col("data.time").alias("time"),
         col("data.speed").alias("speed")
-)\
-
-
+    )\
 
 def Save_mongodb_raw(batch_df, epoch_id):
     batch_df = batch_df.orderBy("time")
@@ -62,6 +59,8 @@ def Save_mongodb_raw(batch_df, epoch_id):
         .option("collection", "RawVehiclesData") \
         .option("uri", "mongodb://localhost:27017") \
         .save()
+    
+
 
 # Εκκίνηση της διαδικασίας επεξεργασίας για τα ωμά δεδομένα
 selected_raw_DATAFRAME= json_to_dataframe_raw \

@@ -119,47 +119,34 @@ Kafka_producer = KafkaProducer(bootstrap_servers='150.140.142.71:9092')
 # save οχήματα με ίδιο t
 vehicles_same_time = {}
 
-# οχήματα με waiting at origin node
-waiting_node_vehicles = []
-
 # ανά Ν στέλντοναι data
 N = 5  
 for index, row in vehicles_data.iterrows():
     # εάν το όχημα δεν κινείται  
     if row['link'] != 'E1':  
         current_time = row['t']
+
+        # εάν το όχημα είναι waiting at origin node, προσπερνάμε
+        if row['link'] == 'waiting_at_origin_node':
+            continue
         # εάν ο χρόνος του δεν υπάρχει ήδη στο vehicles_same_time, την προσθέτει 
         if current_time not in vehicles_same_time:
             vehicles_same_time[current_time] = []
             # προσθήκη αυτών με ίδιο χρόνο στην ίδια λίστα 
         vehicles_same_time[current_time].append(row)
         
-        # περίπτωση --> waiting at origin node -- > προσθήκη στην λίστα των waiting at origin node
-        if row['link'] == 'waiting_at_origin_node':
-            waiting_node_vehicles.append(row)
-        else:
             # για όχημα με μοναδικό χρόνο --> το στέλνουμε 
-            if len(vehicles_same_time[current_time]) == 1:
-                vehicle_json = vehicle_to_json(row, start_time)
-                # σε json --> στέλνει 
-                Kafka_producer.send('vehicle_positions', vehicle_json.encode('utf-8'))
-                print(vehicle_json)
-            else:
-                # για τα οχήματα με τον ίδιο χρόνο --> σε json --> στέλνει 
-                for vehicle in vehicles_same_time[current_time]:
-                    vehicle_json = vehicle_to_json(vehicle, start_time)
-                    Kafka_producer.send('vehicle_positions', vehicle_json.encode('utf-8'))
-                    print(vehicle_json)
-
-    # όταν φτάσει η σειρά του waiting node --> json --> στέλνει 
-    for vehicle in waiting_node_vehicles:
-        # current_time = row['t']
-        if vehicle['t'] == current_time:
-            vehicle_json = vehicle_to_json(vehicle, start_time)
+        if len(vehicles_same_time[current_time]) == 1:
+            vehicle_json = vehicle_to_json(row, start_time)
+            # σε json --> στέλνει 
             Kafka_producer.send('vehicle_positions', vehicle_json.encode('utf-8'))
             print(vehicle_json)
-            # αφαίρεση από waiting_node_vehicles
-            waiting_node_vehicles.remove(vehicle) 
+        else:
+            # για τα οχήματα με τον ίδιο χρόνο --> σε json --> στέλνει 
+            for vehicle in vehicles_same_time[current_time]:
+                vehicle_json = vehicle_to_json(vehicle, start_time)
+                Kafka_producer.send('vehicle_positions', vehicle_json.encode('utf-8'))
+                print(vehicle_json)
             
     time.sleep(N)  
 
